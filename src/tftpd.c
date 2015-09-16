@@ -63,8 +63,12 @@ int main(int argc, char **argv)
         	char errmsg[32]; // ErrMsg (string)
         	u_short pad; // Padding (1 byte)
         } ERROR;
+	
+	char buffer[30000];
+	DATA list_of_data_blocks[100];
 
-	for (;;) {
+	int k;
+	for (k = 0; k < 3; k++) {
                 fd_set rfds;
                 struct timeval tv;
                 int retval;
@@ -93,8 +97,9 @@ int main(int argc, char **argv)
                                              sizeof(message) - 1, 0,
                                              (struct sockaddr *) &client,
                                              &len);
-
-			if (message[1] == 00000001) {
+			
+			if (message[1] == 0x1) {
+				fprintf(stdout, "k: %d\n", k);
 				// RRQ
 				// Fill struct
 				RRQ_WRQ rrq;
@@ -117,34 +122,62 @@ int main(int argc, char **argv)
 					modelen++;
 				}
 				rrq.mode[modelen] = '\0';
-				fprintf(stdout, "rrq.filename: %s\n", rrq.filename);
-				fprintf(stdout, "rrq.mode: %s\n", rrq.mode);
 
-				// open the requested file and chop in up
-				// in appropriately sized packets
+				// Open the requested file and put the content in buffer
 				int fd;
 				fd = open(rrq.filename, O_RDONLY);
-				char buffer[30000];
-				if (read(fd, buffer, 30000) > 0) {
-					for (i = 0; i < 30000; i++) {
-						fprintf(stdout, "%c", buffer[i]);
+				ssize_t size;
+				size = read(fd, buffer, 30000);
+				
+				// Chop the buffer up in pieces:
+				for (i = 0; i * 508 < size; i++) {
+					DATA data;
+					data.opcode = 0x3;
+					data.blocknr = i+1; // hér
+					int j;
+					for (j = 0; j < 508 && i * 508 + j < size; j++) {
+						data.data[j] = buffer[i * 508 + j];
 					}
-					close(fd);
-				} else {
-					fprintf(stdout, "READ ERROR\n");
+					list_of_data_blocks[i] = data;
 				}
+				char msg[512];
+				DATA m = list_of_data_blocks[0];
+				msg[0] = m.opcode >> 8;
+				msg[1] = m.opcode; 
+				msg[2] = m.blocknr >> 8;
+				msg[3] = m.blocknr; // O_o
+				for (i = 0; i < 508; i++) {
+					msg[i+4] = m.data[i]; // :D ERTU MEMMÉR?????
+				}
+				sendto(sockfd, msg, 512, 0, 
+					(struct sockaddr *) &client,
+					(socklen_t) sizeof(client));
 			}
 
-			/* Send the message back. */
-                        sendto(sockfd, message, (size_t) n, 0,
-                               (struct sockaddr *) &client,
-                               (socklen_t) sizeof(client));
-                        /* Zero terminate the message, otherwise
-                           printf may access memory outside of the
-                           string. */
-                        message[n] = '\0';
-                        /* Print the message to stdout and flush. */
-                        fprintf(stdout, "Received:\n%s\n", message);
+			if (message[1] == 0x4) {
+				// ACK
+				fprintf(stdout, "Acknie!\n");
+				int next;
+				next = (message[2] >> 8) + message[3];
+				fprintf(stdout, "next: %d\n", next);
+				DATA m = list_of_data_blocks[next+1];
+				char msg[512];
+				msg[0] = m.opcode >> 8;
+				msg[1] = m.opcode; 
+				msg[2] = m.blocknr >> 8;
+				msg[3] = m.blocknr; // O_o
+				int i;
+				for (i = 0; i < 508; i++) {
+					msg[i+4] = m.data[i]; // :D ERTU MEMMÉR?????
+					if (i < 20) {
+						fprintf(stdout, "msg[%d]: %x\n", i, msg[i]);
+					}
+				}
+				sendto(sockfd, msg, 512, 0,
+					(struct sockaddr *) &client,
+					(socklen_t) sizeof(client));
+			}
+
                         fflush(stdout);
                 } else {
                         fprintf(stdout, "No message in five seconds.\n");
