@@ -21,7 +21,15 @@ int main(int argc, char **argv)
 	int sockfd;
         struct sockaddr_in server, client;
         char message[512];
+	short port;
+	char dir[30];
+	char buffer[300000];
 	
+	/* Put arguments in variables and change working directory */
+	sscanf(argv[1], "%d", &port);
+        sscanf(argv[2], "%s", &dir);
+	chdir(dir);
+
         /* Create and bind a UDP socket */
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         memset(&server, 0, sizeof(server));
@@ -29,7 +37,7 @@ int main(int argc, char **argv)
         /* Network functions need arguments in network byte order instead of
            host byte order. The macros htonl, htons convert the values, */
         server.sin_addr.s_addr = htonl(INADDR_ANY);
-        server.sin_port = htons(3412);
+	server.sin_port = htons(port);
         bind(sockfd, (struct sockaddr *) &server, (socklen_t) sizeof(server));
 
 	/* TFTP Formats */
@@ -38,18 +46,18 @@ int main(int argc, char **argv)
 	typedef struct RRQ_WRQ {
         	u_short opcode; // Op #01/02 (2 bytes)
         	char filename[32]; // Filename (string)
-        	u_short pad1; // Padding (1 byte)
+        	u_char pad1; // Padding (1 byte)
         	char mode[32]; // Mode (string)
-        	u_short pad2; // Padding (1 byte)
+        	u_char pad2; // Padding (1 byte)
         } RRQ_WRQ;
 
 	// Data (DATA)
 	typedef struct DATA {
         	u_short opcode; // Op #03 (2 bytes)
         	u_short blocknr; // Block # (2 bytes)
-        	char data[508]; // Data (n bytes)
+        	char data[512]; // Data (n bytes)
         } DATA;
-
+	
         // Acknowledgment (ACK)
         typedef struct ACK {
         	u_short opcode; // Op #04 (2 bytes)
@@ -61,14 +69,12 @@ int main(int argc, char **argv)
         	u_short opcode; // Op #05 (2 bytes)
         	u_short errorcode; // ErrorCode (2 bytes)
         	char errmsg[32]; // ErrMsg (string)
-        	u_short pad; // Padding (1 byte)
+        	u_char pad; // Padding (1 byte)
         } ERROR;
 	
-	char buffer[30000];
-	DATA list_of_data_blocks[100];
-
-	int k;
-	for (k = 0; k < 3; k++) {
+	DATA list_of_data_blocks[10000];
+	
+	for (;;) {
                 fd_set rfds;
                 struct timeval tv;
                 int retval;
@@ -99,83 +105,90 @@ int main(int argc, char **argv)
                                              &len);
 			
 			if (message[1] == 0x1) {
-				fprintf(stdout, "k: %d\n", k);
 				// RRQ
 				// Fill struct
 				RRQ_WRQ rrq;
 				rrq.opcode = message[1];
-				int i;
-				int namelen;
-				int modelen;
-				rrq.filename[0] = 'd';
-				rrq.filename[1] = 'a';
-				rrq.filename[2] = 't';
-				rrq.filename[3] = 'a';
-				rrq.filename[4] = '/';
-				for (i = 2, namelen = 5; message[i] != '\0'; i++) {
-					rrq.filename[i+3] = message[i];
-					namelen++;
+				u_short i, j;
+				for (i = 0, j = 2; message[j] != '\0'; i++, j++) {
+					rrq.filename[i] = message[j];
 				}
-				rrq.filename[namelen] = '\0';
-				for (i++, modelen = 0; message[i] != '\0'; i++) {
-					rrq.mode[i+5-(namelen+3)] = message[i];
-					modelen++;
+				rrq.filename[i] = '\0';
+				for (i = 0, j++; message[j] != '\0'; i++, j++) {
+					rrq.mode[i] = message[j];
 				}
-				rrq.mode[modelen] = '\0';
+				rrq.mode[i] = '\0';
+
+				// Output of the server:
+				fprintf(stdout, "file \"%s\" requested from 127.0.0.1:%d\n", 
+									rrq.filename, port);
 
 				// Open the requested file and put the content in buffer
-				int fd;
-				fd = open(rrq.filename, O_RDONLY);
+				FILE* fp;
+				fp = fopen(rrq.filename, "rb");
 				ssize_t size;
-				size = read(fd, buffer, 30000);
+				size = fread(buffer, 1, 300000, fp);
+				fclose(fp);
+				fprintf(stdout, "size: %d\n", size);
 				
 				// Chop the buffer up in pieces:
-				for (i = 0; i * 508 < size; i++) {
+				for (i = 0; i * 512 < size; i++) {
 					DATA data;
 					data.opcode = 0x3;
 					data.blocknr = i+1; // hér
-					int j;
-					for (j = 0; j < 508 && i * 508 + j < size; j++) {
-						data.data[j] = buffer[i * 508 + j];
+					for (j = 0; j < 512 && i * 512 + j < size; j++) {
+						data.data[j] = buffer[i * 512 + j];
+					}
+					if (j < 512) {
+						data.data[j] = '\0';
 					}
 					list_of_data_blocks[i] = data;
 				}
-				char msg[512];
+
+				// Send first DATA pack:
+				char msg[516];
 				DATA m = list_of_data_blocks[0];
 				msg[0] = m.opcode >> 8;
 				msg[1] = m.opcode; 
 				msg[2] = m.blocknr >> 8;
-				msg[3] = m.blocknr; // O_o
-				for (i = 0; i < 508; i++) {
-					msg[i+4] = m.data[i]; // :D ERTU MEMMÉR?????
+				msg[3] = m.blocknr;
+				for (i = 0; i < 512; i++) {
+					msg[i+4] = m.data[i];
 				}
-				sendto(sockfd, msg, 512, 0, 
+				sendto(sockfd, msg, (size_t) sizeof(msg), 0, 
 					(struct sockaddr *) &client,
 					(socklen_t) sizeof(client));
 			}
 
 			if (message[1] == 0x4) {
 				// ACK
-				fprintf(stdout, "Acknie!\n");
-				int next;
-				next = (message[2] >> 8) + message[3];
-				fprintf(stdout, "next: %d\n", next);
-				DATA m = list_of_data_blocks[next+1];
-				char msg[512];
+				// Fill sruct
+				ACK ack;
+				ack.opcode = message[1];
+				u_char a, b;
+				a = message[2];
+				b = message[3];
+				ack.blocknr = (a << 8) | b;
+				DATA m = list_of_data_blocks[ack.blocknr];
+
+				// Send next block
+				char msg[516];
 				msg[0] = m.opcode >> 8;
 				msg[1] = m.opcode; 
 				msg[2] = m.blocknr >> 8;
-				msg[3] = m.blocknr; // O_o
-				int i;
-				for (i = 0; i < 508; i++) {
-					msg[i+4] = m.data[i]; // :D ERTU MEMMÉR?????
-					if (i < 20) {
-						fprintf(stdout, "msg[%d]: %x\n", i, msg[i]);
-					}
+				msg[3] = m.blocknr;
+				u_short i;
+				for (i = 0; i < 512 && m.data[i] != '\0'; i++) {
+					msg[i+4] = m.data[i];
 				}
-				sendto(sockfd, msg, 512, 0,
+				sendto(sockfd, msg, (size_t) i+4, 0,
 					(struct sockaddr *) &client,
 					(socklen_t) sizeof(client));
+			}
+
+			if (message[1] == 0x5) {
+				// ERROR
+				fprintf(stdout, "ERROR");
 			}
 
                         fflush(stdout);
