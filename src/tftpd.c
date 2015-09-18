@@ -73,15 +73,15 @@ ssize_t read_file(FILE* fp, RRQ_WRQ rrq, char *buffer)
 	return size;
 }
 
-DATA *chop_it(char *buffer, ssize_t size)
+DATA *chop_it(char *buffer, ssize_t size, u_short start)
 {
 	// Chop the buffer up in pieces:
 	u_short i, j;
 	DATA data;
 	DATA data_blocks[586];
-	for (i = 0; i * 512 < size; i++) {
+	for (i = 0; i * 512 < size && i < 586; i++) {
 		data.opcode = 0x3;
-		data.blocknr = i+1;
+		data.blocknr = i+start;
 		for (j = 0; j < 512 && i * 512 + j < size; j++) {
 			data.data[j] = buffer[i * 512 + j];
 		}
@@ -168,7 +168,7 @@ int main(int argc, char **argv)
 									rrq.filename, port);
 				fp = fopen(rrq.filename, "rb");
 				ssize_t bytes_read = read_file(fp, rrq, buffer);
-				list_of_data_blocks = chop_it(buffer, bytes_read);
+				list_of_data_blocks = chop_it(buffer, bytes_read, 1);
 				
 				// Send first DATA pack:
 				DATA m = list_of_data_blocks[0];
@@ -183,17 +183,19 @@ int main(int argc, char **argv)
 				// ACK
 				// Fill sruct
 				ACK ack;
-				ack.opcode = message[1];
 				u_char a, b;
+				ack.opcode = message[1];
 				a = message[2];
 				b = message[3];
 				ack.blocknr = (a << 8) | b;
+				fprintf(stdout, "blocknr: %d\n", ack.blocknr);
 				// if buffer finished then chop
-				if (ack.blocknr % 586 == 0) {
+				if (ack.blocknr % 585 == 0) {
+					fprintf(stdout, "rebuffer \n");
 					ssize_t bytes_read = read_file(fp, rrq, buffer);
-					list_of_data_blocks = chop_it(buffer, bytes_read);
+					list_of_data_blocks = chop_it(buffer, bytes_read, ack.blocknr + 1);
 				}
-				DATA m = list_of_data_blocks[ack.blocknr % 586];
+				DATA m = list_of_data_blocks[ack.blocknr % 585];
 				char *msg = assemble_msg(m);
 
 				// Send next block
