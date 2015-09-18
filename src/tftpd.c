@@ -52,7 +52,7 @@ typedef struct ERROR {
 char *assemble_msg(DATA m)
 {
 	//char msg[516];
-	char *msg = (char*)malloc(516);
+	char *msg = malloc(516);
 	u_short i;
 	msg[0] = m.opcode >> 8;
 	msg[1] = m.opcode; 
@@ -101,7 +101,9 @@ int main(int argc, char **argv)
 	short port;
 	char dir[30];
 	char buffer[303508];
-	
+	FILE* fp;
+	RRQ_WRQ rrq;
+				
 	/* Put arguments in variables and change working directory */
 	sscanf(argv[1], "%d", &port);
         sscanf(argv[2], "%s", &dir);
@@ -150,7 +152,6 @@ int main(int argc, char **argv)
 			if (message[1] == 0x1) {
 				// RRQ
 				// Fill struct
-				RRQ_WRQ rrq;
 				rrq.opcode = message[1];
 				u_short i, j;
 				for (i = 0, j = 2; message[j] != '\0'; i++, j++) {
@@ -165,7 +166,6 @@ int main(int argc, char **argv)
 				// Output of the server:
 				fprintf(stdout, "file \"%s\" requested from 127.0.0.1:%d\n", 
 									rrq.filename, port);
-				FILE* fp;
 				fp = fopen(rrq.filename, "rb");
 				ssize_t bytes_read = read_file(fp, rrq, buffer);
 				list_of_data_blocks = chop_it(buffer, bytes_read);
@@ -188,9 +188,12 @@ int main(int argc, char **argv)
 				a = message[2];
 				b = message[3];
 				ack.blocknr = (a << 8) | b;
-				fprintf(stdout, "ACKNIE blocknr: %d\n", ack.blocknr);
 				// if buffer finished then chop
-				DATA m = list_of_data_blocks[ack.blocknr];
+				if (ack.blocknr % 586 == 0) {
+					ssize_t bytes_read = read_file(fp, rrq, buffer);
+					list_of_data_blocks = chop_it(buffer, bytes_read);
+				}
+				DATA m = list_of_data_blocks[ack.blocknr % 586];
 				char *msg = assemble_msg(m);
 
 				// Send next block
