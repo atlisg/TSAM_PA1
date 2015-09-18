@@ -51,7 +51,8 @@ typedef struct ERROR {
 
 char *assemble_msg(DATA m)
 {
-	char msg[516];
+	//char msg[516];
+	char *msg = (char*)malloc(516);
 	u_short i;
 	msg[0] = m.opcode >> 8;
 	msg[1] = m.opcode; 
@@ -60,7 +61,7 @@ char *assemble_msg(DATA m)
 	for (i = 0; i < m.datasize; i++) {
 		msg[i+4] = m.data[i];
 	}
-	return *msg;
+	return (char *)msg;
 }
 
 ssize_t read_file(FILE* fp, RRQ_WRQ rrq, char *buffer) 
@@ -181,19 +182,19 @@ int main(int argc, char **argv)
 			if (message[1] == 0x4) {
 				// ACK
 				// Fill sruct
-				fprintf(stdout, "ACKNIE");
 				ACK ack;
 				ack.opcode = message[1];
 				u_char a, b;
 				a = message[2];
 				b = message[3];
 				ack.blocknr = (a << 8) | b;
+				fprintf(stdout, "ACKNIE blocknr: %d\n", ack.blocknr);
 				// if buffer finished then chop
 				DATA m = list_of_data_blocks[ack.blocknr];
 				char *msg = assemble_msg(m);
 
 				// Send next block
-				sendto(sockfd, &msg,
+				sendto(sockfd, msg,
 					(size_t) m.datasize+4, 0,
 					(struct sockaddr *) &client,
 					(socklen_t) sizeof(client));
