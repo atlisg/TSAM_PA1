@@ -49,9 +49,11 @@ typedef struct ERROR {
         u_char pad; // Padding (1 byte)
 } ERROR;
 
+DATA *data_blocks;
+
 char *assemble_msg(DATA m)
 {
-	//char msg[516];
+	// assemble char array to send packet from struct
 	char *msg = malloc(516);
 	u_short i;
 	msg[0] = m.opcode >> 8;
@@ -64,21 +66,20 @@ char *assemble_msg(DATA m)
 	return (char *)msg;
 }
 
-ssize_t read_file(FILE* fp, RRQ_WRQ rrq, char *buffer) 
+ssize_t read_file(FILE* fp, char *buffer) 
 {
 	// Read from file and put the content in buffer
 	ssize_t size;
-	size = fread(buffer, 1, 303508, fp);
-	fprintf(stdout, "size: %d\n", size);
+	size = fread(buffer, 1, 300032, fp);
 	return size;
 }
 
-DATA *chop_it(char *buffer, ssize_t size, u_short start)
+void chop_it(char *buffer, ssize_t size, u_short start)
 {
 	// Chop the buffer up in pieces:
 	u_short i, j;
 	DATA data;
-	DATA data_blocks[586];
+	data_blocks = malloc(303548);
 	for (i = 0; i * 512 < size && i < 586; i++) {
 		data.opcode = 0x3;
 		data.blocknr = i+start;
@@ -88,10 +89,7 @@ DATA *chop_it(char *buffer, ssize_t size, u_short start)
 		data.datasize = j;
 		data_blocks[i] = data;
 	}
-	fprintf(stdout, "i: %d\n", i);
-	return data_blocks;
 }
-DATA *list_of_data_blocks;
 
 int main(int argc, char **argv)
 {
@@ -100,10 +98,10 @@ int main(int argc, char **argv)
         char message[512];
 	short port;
 	char dir[30];
-	char buffer[303508];
+	char *buffer = malloc(300032);
 	FILE* fp;
 	RRQ_WRQ rrq;
-				
+	
 	/* Put arguments in variables and change working directory */
 	sscanf(argv[1], "%d", &port);
         sscanf(argv[2], "%s", &dir);
@@ -167,11 +165,11 @@ int main(int argc, char **argv)
 				fprintf(stdout, "file \"%s\" requested from 127.0.0.1:%d\n", 
 									rrq.filename, port);
 				fp = fopen(rrq.filename, "rb");
-				ssize_t bytes_read = read_file(fp, rrq, buffer);
-				list_of_data_blocks = chop_it(buffer, bytes_read, 1);
-				
+				ssize_t bytes_read = read_file(fp, buffer);
+				chop_it(buffer, bytes_read, 1);
+
 				// Send first DATA pack:
-				DATA m = list_of_data_blocks[0];
+				DATA m = data_blocks[0];
 				char *msg = assemble_msg(m);
 				sendto(sockfd, msg,
 					(size_t) m.datasize+4, 0, 
@@ -188,14 +186,13 @@ int main(int argc, char **argv)
 				a = message[2];
 				b = message[3];
 				ack.blocknr = (a << 8) | b;
-				fprintf(stdout, "blocknr: %d\n", ack.blocknr);
-				// if buffer finished then chop
-				if (ack.blocknr % 585 == 0) {
-					fprintf(stdout, "rebuffer \n");
-					ssize_t bytes_read = read_file(fp, rrq, buffer);
-					list_of_data_blocks = chop_it(buffer, bytes_read, ack.blocknr + 1);
+
+				// if buffer finished then rebuffer
+				if (ack.blocknr % 586 == 0) {
+					ssize_t bytes_read = read_file(fp, buffer);
+					chop_it(buffer, bytes_read, ack.blocknr + 1);
 				}
-				DATA m = list_of_data_blocks[ack.blocknr % 585];
+				DATA m = data_blocks[ack.blocknr % 586];
 				char *msg = assemble_msg(m);
 
 				// Send next block
