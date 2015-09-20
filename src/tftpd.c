@@ -108,7 +108,7 @@ void chop_it(char *buffer, ssize_t size, u_short start)
 {
 	u_short i, j;
 	DATA data;
-	data_blocks = malloc(303548);
+	data_blocks = malloc(303548); /* Size of malloc chosen to fit whole structs */
 	if (data_blocks == NULL) {
 		fprintf(stdout, "Failed to allocate memory in function chop_it().\n");
 		exit(0);
@@ -135,11 +135,15 @@ int main(int argc, char **argv)
 	FILE* fp;
 	RRQ_WRQ rrq;
 	bool last = false;
+	int curr = 0;
 	
 	/* Put arguments in variables and change working directory */
 	sscanf(argv[1], "%hd", &port);
         sscanf(argv[2], "%s", &dir);
-	chdir(dir);
+	if (chdir(dir) < 0) {
+		fprintf(stdout, "Failed to change directories.\n");
+		exit(0);
+	}
 
         /* Create and bind a UDP socket */
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -158,7 +162,6 @@ int main(int argc, char **argv)
 		exit(0);
 	}
 
-	int k;
 	for (;;) {
                 fd_set rfds;
                 struct timeval tv;
@@ -218,6 +221,7 @@ int main(int argc, char **argv)
 				/* Send first DATA pack */
 				DATA m = data_blocks[0];
 				char *msg = assemble_msg(m);
+				curr = 1;
 				if (sendto(sockfd, msg, (size_t) m.datasize+4, 0, 
 						(struct sockaddr *) &client,
 						(socklen_t) sizeof(client)) < 0) {
@@ -237,13 +241,34 @@ int main(int argc, char **argv)
 				strncpy(error.errmsg, src, 33);
 
 				char *msg = assemble_error(error);
-				u_short i;
 				if (sendto(sockfd, msg, (size_t) 37, 0,
 						(struct sockaddr *) &client,
 						(socklen_t) sizeof(client)) < 0) {
 					fprintf(stdout, "Failed to send to client.\n");
 					exit(0);
 				}
+				free(msg);
+				exit(0);
+			}
+
+			/* DATA */
+			if (message[1] == 0x3) {
+				/* Fill struct */
+				ERROR error;
+				error.opcode = 0x5;
+				error.errorcode = 0x4;
+				char *src = "Why are you sending DATA packet? What's your problem?";
+				strncpy(error.errmsg, src, 54);
+
+				char *msg = assemble_error(error);
+				if (sendto(sockfd, msg, (size_t) 58, 0,
+						(struct sockaddr *) &client,
+						(socklen_t) sizeof(client)) < 0) {
+					fprintf(stdout, "Failed to send to client.\n");
+					exit(0);
+				}
+				free(msg);
+				exit(0);
 			}
 
 			/* ACK packet */
@@ -267,6 +292,26 @@ int main(int argc, char **argv)
 						ssize_t bytes_read = read_file(fp, buffer);
 						chop_it(buffer, bytes_read, ack.blocknr + 1);
 					}
+					if (curr != ack.blocknr) {
+						/* Fill struct */
+						ERROR error;
+						error.opcode = 0x5;
+						error.errorcode = 0x0;
+						char *src = "ACK blocknr. does not match last DATA packet blocknr.";
+						strncpy(error.errmsg, src, 54);
+
+						char *msg = assemble_error(error);
+						if (sendto(sockfd, msg, (size_t) 58, 0,
+								(struct sockaddr *) &client,
+								(socklen_t) sizeof(client)) < 0) {
+							fprintf(stdout, "Failed to send to client.\n");
+							exit(0);
+						}
+						free(msg);
+						/* Wait for retransmit? */
+						exit(0);
+					}
+					curr++;
 					DATA m = data_blocks[ack.blocknr % 586];
 					char *msg = assemble_msg(m);
 	
@@ -288,7 +333,22 @@ int main(int argc, char **argv)
 
 			/* ERROR packet */
 			if (message[1] == 0x5) {
-				fprintf(stdout, "ERROR");
+				/* Fill struct */
+				ERROR error;
+				error.opcode = 0x5;
+				error.errorcode = 0x0;
+				char *src = "Error to you as well.";
+				strncpy(error.errmsg, src, 22);
+
+				char *msg = assemble_error(error);
+				if (sendto(sockfd, msg, (size_t) 26, 0,
+						(struct sockaddr *) &client,
+						(socklen_t) sizeof(client)) < 0) {
+					fprintf(stdout, "Failed to send to client.\n");
+					exit(0);
+				}
+				free(msg);
+				exit(0);
 			}
 
                         fflush(stdout);
