@@ -47,7 +47,7 @@ typedef struct ACK {
 typedef struct ERROR {
         u_short opcode;    /* Op #05 (2 bytes) */
         u_short errorcode; /* ErrorCode (2 bytes) */
-        char errmsg[32];   /* ErrMsg (string) */
+        char errmsg[100];   /* ErrMsg (string) */
         u_char pad;        /* Padding (1 byte) */
 } ERROR;
 
@@ -58,7 +58,7 @@ char *assemble_msg(DATA m)
 {
 	char *msg = malloc(516);
 	if (msg == NULL) {
-		fprintf(stdout, "Failed to allocate memory in function assemble_msg.\n");
+		fprintf(stdout, "Failed to allocate memory in function assemble_msg().\n");
 		exit(0);
 	}
 	u_short i;
@@ -68,6 +68,25 @@ char *assemble_msg(DATA m)
 	msg[3] = m.blocknr;
 	for (i = 0; i < m.datasize; i++) {
 		msg[i+4] = m.data[i];
+	}
+	return msg;
+}
+
+/* Assemble char array to send ERROR packet */
+char *assemble_error(ERROR e)
+{
+	char *msg = malloc(100);
+	if (msg == NULL) {
+		fprintf(stdout, "Failed to allocate memory in function assemble_error().\n");
+		exit(0);
+	}
+	u_short i;
+	msg[0] = e.opcode >> 8;
+	msg[1] = e.opcode;
+	msg[2] = e.errorcode >> 8;
+	msg[3] = e.errorcode;
+	for (i = 0; e.errmsg[i] != '\0'; i++) {
+		msg[i+4] = e.errmsg[i];
 	}
 	return msg;
 }
@@ -200,12 +219,31 @@ int main(int argc, char **argv)
 				DATA m = data_blocks[0];
 				char *msg = assemble_msg(m);
 				if (sendto(sockfd, msg, (size_t) m.datasize+4, 0, 
-					(struct sockaddr *) &client,
-					(socklen_t) sizeof(client)) < 0) {
+						(struct sockaddr *) &client,
+						(socklen_t) sizeof(client)) < 0) {
 					fprintf(stdout, "Failed to send to client.\n");
 					exit(0);
 				}
 				free(msg);
+			}
+
+			/* WRQ */
+			if (message[1] == 0x2) {
+				/* Fill struct */
+				ERROR error;
+				error.opcode = 0x5;
+				error.errorcode = 0x4;
+				char *src = "Not allowed to upload to server.";
+				strncpy(error.errmsg, src, 33);
+
+				char *msg = assemble_error(error);
+				u_short i;
+				if (sendto(sockfd, msg, (size_t) 37, 0,
+						(struct sockaddr *) &client,
+						(socklen_t) sizeof(client)) < 0) {
+					fprintf(stdout, "Failed to send to client.\n");
+					exit(0);
+				}
 			}
 
 			/* ACK packet */
@@ -234,8 +272,8 @@ int main(int argc, char **argv)
 	
 					/* Send next block */
 					if (sendto(sockfd, msg, (size_t) m.datasize+4, 0,
-						(struct sockaddr *) &client,
-						(socklen_t) sizeof(client)) < 0) {
+							(struct sockaddr *) &client,
+							(socklen_t) sizeof(client)) < 0) {
 						fprintf(stdout, "Failed to send to client.\n");
 						exit(0);
 					}
